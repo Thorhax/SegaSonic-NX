@@ -5,7 +5,11 @@
 
 #pragma once
 
-#include "machine/z80daisy.h"
+// Port: MAME device framework removed (marked "Port:"); memory through
+// segas32::Bus8 interfaces; no daisy chain, debugger or callbacks.
+#include "cpu/v60/mame_shim.h"
+
+#include <functional>
 
 enum
 {
@@ -15,67 +19,62 @@ enum
 	Z80_INPUT_LINE_MAX
 };
 
-enum
-{
-	Z80_PC = STATE_GENPC, Z80_SP = 1,
-	Z80_A, Z80_F, Z80_B, Z80_C, Z80_D, Z80_E, Z80_H, Z80_L,
-	Z80_AF, Z80_BC, Z80_DE, Z80_HL,
-	Z80_IX, Z80_IY, Z80_AF2, Z80_BC2, Z80_DE2, Z80_HL2,
-	Z80_R, Z80_I, Z80_IM, Z80_IFF1, Z80_IFF2, Z80_HALT,
-	Z80_DC0, Z80_DC1, Z80_DC2, Z80_DC3, Z80_WZ
-};
 
-class z80_device : public cpu_device, public z80_daisy_chain_interface
+
+class z80_device
 {
 public:
-	z80_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
-
-	void z80_set_m1_cycles(u8 m1_cycles) { m_m1_cycles = m1_cycles; }
-	void z80_set_mreq_cycles(u8 mreq_cycles) { m_mreq_cycles = mreq_cycles; }
-	void z80_set_iorq_cycles(u8 iorq_cycles) { m_iorq_cycles = iorq_cycles; }
-
-	template <typename... T> void set_memory_map(T &&... args) { set_addrmap(AS_PROGRAM, std::forward<T>(args)...); }
-	template <typename... T> void set_m1_map(T &&... args) { set_addrmap(AS_OPCODES, std::forward<T>(args)...); }
-	template <typename... T> void set_io_map(T &&... args) { set_addrmap(AS_IO, std::forward<T>(args)...); }
-	auto irqack_cb() { return m_irqack_cb.bind(); }
-	auto refresh_cb() { return m_refresh_cb.bind(); }
-	auto nomreq_cb() { return m_nomreq_cb.bind(); }
-	auto halt_cb() { return m_halt_cb.bind(); }
-	auto busack_cb() { return m_busack_cb.bind(); }
-
-	// output pins state
-	int halt_r() { return m_halt; }
-	int busack_r() { return m_busack_state; }
+	// Port: construction on the board's buses; `irq_vector` is the vector
+	// given with set_input_line_and_vector (MAME's standard_irq_callback).
+	z80_device(segas32::Bus8 &program, segas32::Bus8 &io);
+	void reset() { device_reset(); }
+	int run(int cycles);                    // returns cycles used (MAME execute_run)
+	void set_input(int inputnum, int state) { execute_set_input(inputnum, state); }
+	int irq_vector = 0xff;
+	std::function<void(z80_device &)> trace; // Port: called before each instruction (tracing)
+	void abort_run() { m_icount = 0; }
+	int cycles_left() const { return m_icount; }
+	uint16_t pc() const { return m_pc.w; }
+	uint16_t sp() const { return m_sp.w; }
+	uint16_t af() { m_af.b.l = get_f(); return m_af.w; }
+	uint16_t bc() const { return m_bc.w; }
+	uint16_t de() const { return m_de.w; }
+	uint16_t hl() const { return m_hl.w; }
 
 protected:
-	z80_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
+	void device_start();
+	void device_reset();
+	void execute_run();
+	void execute_set_input(int inputnum, int state);
 
-	// device_t implementation
-	virtual void device_validity_check(validity_checker &valid) const override;
-	virtual void device_start() override ATTR_COLD;
-	virtual void device_reset() override ATTR_COLD;
-	virtual void device_pre_save() override ATTR_COLD { m_af.b.l = get_f(); }
-	virtual void device_post_load() override ATTR_COLD { set_f(m_af.b.l); }
-
-	// device_execute_interface implementation
-	virtual bool cpu_is_interruptible() const override { return true; }
-	virtual u32 execute_min_cycles() const noexcept override { return 1; }
-	virtual u32 execute_max_cycles() const noexcept override { return 16; }
-	virtual u32 execute_default_irq_vector(int inputnum) const noexcept override { return 0xff; }
-	virtual bool execute_input_edge_triggered(int inputnum) const noexcept override { return inputnum == INPUT_LINE_NMI; }
-	virtual void execute_run() override;
-	virtual void execute_set_input(int inputnum, int state) override;
-
-	// device_memory_interface implementation
-	virtual space_config_vector memory_space_config() const override;
-
-	// device_state_interface implementation
-	virtual void state_import(const device_state_entry &entry) override;
-	virtual void state_export(const device_state_entry &entry) override;
-	virtual void state_string_export(const device_state_entry &entry, std::string &str) const override;
-
-	// device_disasm_interface implementation
-	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
+	// Port: stand-ins for what the generated code calls.
+	struct null_cb {
+		bool isunset() const { return true; }
+		template <typename... T> void operator()(T &&...) const {}
+	};
+	struct null_debug { void interrupt_hook(int, int) {} };
+	struct device_execute_interface {
+		struct dev { null_debug *debug() { static null_debug d; return &d; } };
+		static dev &device() { static dev d; return d; }
+	};
+	static constexpr bool debugger_enabled() { return false; }
+	void debugger_instruction_hook(offs_t) { if (trace) trace(*this); }
+	void debugger_wait_hook() {}
+	static constexpr bool access_to_be_redone() { return false; }
+	static constexpr bool daisy_chain_present() { return false; }
+	struct device_z80daisy_interface { int z80daisy_irq_ack() { return 0xff; } void z80daisy_irq_reti() {} };
+	device_z80daisy_interface *daisy_get_irq_device() { return nullptr; }
+	void daisy_call_reti_device() {}
+	int daisy_update_irq_state() { return CLEAR_LINE; }
+	int standard_irq_callback(int, offs_t) { return irq_vector; }
+	uint64_t total_cycles() const { return m_total_cycles; }
+	struct space8 {
+		segas32::Bus8 *bus = nullptr;
+		u8 read_byte(offs_t a) { return bus->read8(u16(a)); }
+		u8 read_interruptible(offs_t a) { return bus->read8(u16(a)); }
+		void write_interruptible(offs_t a, u8 v) { bus->write8(u16(a), v); }
+	};
+	uint64_t m_total_cycles = 0;
 
 	void illegal_1();
 	void illegal_2();
@@ -124,20 +123,9 @@ protected:
 	virtual u8 opcode_read();
 	virtual u8 arg_read();
 
-	// address spaces
-	const address_space_config m_program_config;
-	const address_space_config m_opcodes_config;
-	const address_space_config m_io_config;
-	memory_access<16, 0, 0, ENDIANNESS_LITTLE>::cache m_args;
-	memory_access<16, 0, 0, ENDIANNESS_LITTLE>::cache m_opcodes;
-	memory_access<16, 0, 0, ENDIANNESS_LITTLE>::specific m_data;
-	memory_access<16, 0, 0, ENDIANNESS_LITTLE>::specific m_io;
-
-	devcb_write_line m_irqack_cb;
-	devcb_write8 m_refresh_cb;
-	devcb_write8 m_nomreq_cb;
-	devcb_write_line m_halt_cb;
-	devcb_write_line m_busack_cb;
+	// address spaces (Port: ours)
+	space8 m_args, m_opcodes, m_data, m_io;
+	null_cb m_irqack_cb, m_refresh_cb, m_nomreq_cb, m_halt_cb, m_busack_cb;
 
 	static constexpr u8 SA_BUSREQ        = 0;
 	static constexpr u8 SA_NMI_PENDING   = 1;
@@ -216,7 +204,7 @@ protected:
 	u8     m_iorq_cycles;
 };
 
-DECLARE_DEVICE_TYPE(Z80, z80_device)
+
 
 
 #endif // MAME_CPU_Z80_Z80_H

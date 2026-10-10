@@ -8,7 +8,7 @@
    interrupts, timers, I/O chip, EEPROM, trackball counters, protection.
    The sound Z80 comes with step 5.
 4. **Video** — done on the host (2026-10-10): all layers, sprites, mixer.
-5. Sound: two YM3438 (ymfm) and the RF5C68.
+5. **Sound** — done on the host (2026-10-11): Z80, 2x YM3438, RF5C68.
 6. Switch: trackball controls, perf, hardware tests.
 
 ## Hardware (MAME 0.289, segas32.cpp)
@@ -130,3 +130,33 @@ frame; the game ignores per-frame deltas of 0x60 or more; MAME's X is
 reversed, Y counts downwards), A/B = button, Plus = start, Minus = coin.
 Menu: test switch toggle. EEPROM saved to sdmc:/switch/sonic/eeprom.bin on
 menu and exit. Perf log: emu_ms and video_ms per frame.
+
+### Switch build 2 result (2026-10-11)
+
+Smooth, no graphical errors. Log: 58.4-60 fps, emu 5.4 ms mean (7.0 max),
+video 5.1 ms mean (8.4 max), worst frame 13.4 ms of 16.7.
+
+## Step 5: sound (2026-10-11)
+
+- `src/cpu/z80`: MAME's Z80 (generated core) behind the shim.
+- `src/board/scheduler`: MAME's scheduler copied (see its header). Needed
+  once two CPUs share RAM: timeslices of at most 1/60 s, CPUs in order (V60,
+  Z80), a CPU stopping early pulls the target back, abort when a timer
+  becomes the head, input lines through a queue + zero-delay timer, a CPU
+  held in reset eats its cycles, and inside a timer callback time() is the
+  timer's expiry (this last one put the Z80's YM timer IRQ one instruction
+  late until fixed). MAME's sound manager timer (every 1/50 s) is modelled
+  too: it splits timeslices.
+- Sound board: Z80 map (ROM, 8 KB bank of the 4 MB sound region, RF5C68
+  window, shared RAM), ports (two YM3438 at 0x80/0x90, banks, sound
+  interrupt controller at 0xc0/0xd0, 0xf1), Z80 held in reset by CNT2 of
+  the I/O chip until the V60 releases it. YM3438: MAME's ymfm glue (timers
+  as scheduler timers, busy end, mode-write and interrupt syncs). RF5C68:
+  MAME's. Mixed to 48 kHz with MAME's route gains (0.30, 0.30, 0.40).
+- Checked: Z80 trace, first 300 frames: 4,040,780 MAME trace lines, all
+  identical (PC). V60 trace (60 frames) and 20,000 attract frames still
+  identical. A played game (`scripts/inputs/play_sound.txt`: coin, start,
+  button presses; MAME driven by `S32_INPUTS` in drive.lua): 3,600 of 3,600
+  frames identical. Audio vs MAME's -wavwrite over that game: per-second RMS
+  within ~1%, correlation 0.991-0.998 at a constant 6-sample lag (MAME's
+  resampler).

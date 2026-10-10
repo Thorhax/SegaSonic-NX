@@ -67,6 +67,14 @@ constexpr T bitswap(T val, B... bits) {
     return r;
 }
 
+// emucore.h PAIR16 (little-endian host)
+union PAIR16 {
+    struct { uint8_t l, h; } b;
+    struct { int8_t l, h; } sb;
+    uint16_t w;
+    int16_t sw;
+};
+
 inline float u2f(uint32_t v) {
     float f;
     std::memcpy(&f, &v, 4);
@@ -79,6 +87,14 @@ inline uint32_t f2u(float f) {
 }
 
 namespace segas32 {
+
+// An 8-bit bus (the Z80's program and I/O spaces).
+class Bus8 {
+public:
+    virtual ~Bus8() = default;
+    virtual uint8_t read8(uint16_t addr) = 0;
+    virtual void write8(uint16_t addr, uint8_t data) = 0;
+};
 
 // The board's side of a 16-bit little-endian bus (as MAME's address space
 // with data width 16): word accesses at even addresses with a byte mask.

@@ -1,0 +1,11 @@
+# Coin up and start, then press the button now and then (no trackball):
+# brings in the music and effects for audio comparison.
+1000-1005 coin1=1
+1100-1105 start1=1
+1300-1310 button1=1
+1600-1610 button1=1
+1900-1910 button1=1
+2200-2210 button1=1
+2500-2510 button1=1
+2800-2810 button1=1
+3100-3110 button1=1

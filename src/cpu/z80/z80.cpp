@@ -21,9 +21,7 @@ TODO:
 
 *****************************************************************************/
 
-#include "emu.h"
-#include "z80.h"
-#include "z80dasm.h"
+#include "cpu/z80/z80.h"
 
 #include "z80.inc"
 
@@ -33,7 +31,7 @@ TODO:
 #define LOG_UNDOC (1U << 2)
 
 #define VERBOSE (LOG_UNDOC)
-#include "logmacro.h"
+#define LOGMASKED(...) ((void)0) // Port: no logging
 
 
 /***************************************************************
@@ -628,55 +626,8 @@ void z80_device::illegal_2()
 /****************************************************************************
  * Processor initialization
  ****************************************************************************/
-void z80_device::device_validity_check(validity_checker &valid) const
-{
-	cpu_device::device_validity_check(valid);
-
-	if (4 > m_m1_cycles)
-		osd_printf_error("M1 cycles %u is less than minimum 4\n", m_m1_cycles);
-	if (3 > m_mreq_cycles)
-		osd_printf_error("MREQ cycles %u is less than minimum 3\n", m_mreq_cycles);
-	if (4 > m_iorq_cycles)
-		osd_printf_error("IORQ cycles %u is less than minimum 4\n", m_iorq_cycles);
-}
-
 void z80_device::device_start()
 {
-	save_item(NAME(PRVPC));
-	save_item(NAME(PC));
-	save_item(NAME(SP));
-	save_item(NAME(AF));
-	save_item(NAME(BC));
-	save_item(NAME(DE));
-	save_item(NAME(HL));
-	save_item(NAME(IX));
-	save_item(NAME(IY));
-	save_item(NAME(WZ));
-	save_item(NAME(m_af2.w));
-	save_item(NAME(m_bc2.w));
-	save_item(NAME(m_de2.w));
-	save_item(NAME(m_hl2.w));
-	save_item(NAME(QT));
-	save_item(NAME(Q));
-	save_item(NAME(R));
-	save_item(NAME(R2));
-	save_item(NAME(m_iff1));
-	save_item(NAME(m_iff2));
-	save_item(NAME(m_halt));
-	save_item(NAME(m_im));
-	save_item(NAME(m_i));
-	save_item(NAME(m_nmi_state));
-	save_item(NAME(m_irq_state));
-	save_item(NAME(m_wait_state));
-	save_item(NAME(m_busreq_state));
-	save_item(NAME(m_busack_state));
-	save_item(NAME(m_ea));
-	save_item(NAME(m_service_attention));
-	save_item(NAME(m_tmp_irq_vector));
-	save_item(NAME(m_shared_data.w));
-	save_item(NAME(m_shared_data2.w));
-	save_item(NAME(m_rtemp));
-	save_item(NAME(m_ref));
 
 	// Reset registers to their initial values
 	PRVPC = 0;
@@ -712,47 +663,10 @@ void z80_device::device_start()
 	m_service_attention = 0;
 	m_rtemp = 0;
 
-	space(AS_PROGRAM).cache(m_args);
-	space(has_space(AS_OPCODES) ? AS_OPCODES : AS_PROGRAM).cache(m_opcodes);
-	space(AS_PROGRAM).specific(m_data);
-	space(AS_IO).specific(m_io);
 
 	IX = IY = 0xffff; // IX and IY are FFFF after a reset!
 	m_f.z_val = 0; // Zero flag is set
 
-	// set up the state table
-	state_add(STATE_GENPC,     "PC",        m_pc.w).callimport();
-	state_add(STATE_GENPCBASE, "CURPC",     m_prvpc.w).callimport().noshow();
-	state_add(Z80_SP,          "SP",        SP);
-	state_add(STATE_GENFLAGS,  "GENFLAGS",  F).noshow().formatstr("%8s");
-	state_add(Z80_A,           "A",         A).noshow();
-	state_add(Z80_F,           "F",         F).noshow().callimport().callexport();
-	state_add(Z80_B,           "B",         B).noshow();
-	state_add(Z80_C,           "C",         C).noshow();
-	state_add(Z80_D,           "D",         D).noshow();
-	state_add(Z80_E,           "E",         E).noshow();
-	state_add(Z80_H,           "H",         H).noshow();
-	state_add(Z80_L,           "L",         L).noshow();
-	state_add(Z80_AF,          "AF",        AF).callimport().callexport();
-	state_add(Z80_BC,          "BC",        BC);
-	state_add(Z80_DE,          "DE",        DE);
-	state_add(Z80_HL,          "HL",        HL);
-	state_add(Z80_IX,          "IX",        IX);
-	state_add(Z80_IY,          "IY",        IY);
-	state_add(Z80_AF2,         "AF2",       m_af2.w);
-	state_add(Z80_BC2,         "BC2",       m_bc2.w);
-	state_add(Z80_DE2,         "DE2",       m_de2.w);
-	state_add(Z80_HL2,         "HL2",       m_hl2.w);
-	state_add(Z80_WZ,          "WZ",        WZ);
-	state_add(Z80_R,           "R",         m_rtemp).callimport().callexport();
-	state_add(Z80_I,           "I",         m_i);
-	state_add(Z80_IM,          "IM",        m_im).mask(0x3);
-	state_add(Z80_IFF1,        "IFF1",      m_iff1).mask(0x1);
-	state_add(Z80_IFF2,        "IFF2",      m_iff2).mask(0x1);
-	state_add(Z80_HALT,        "HALT",      m_halt).mask(0x1);
-
-	// set our instruction counter
-	set_icountptr(m_icount);
 }
 
 /****************************************************************************
@@ -782,6 +696,15 @@ void z80_device::device_reset()
 void z80_device::execute_run()
 {
 	#include "cpu/z80/z80.hxx"
+}
+
+int z80_device::run(int cycles) // Port
+{
+	m_icount = cycles;
+	execute_run();
+	const int used = cycles - m_icount;
+	m_total_cycles += uint64_t(used);
+	return used;
 }
 
 void z80_device::execute_set_input(int inputnum, int state)
@@ -823,118 +746,14 @@ void z80_device::execute_set_input(int inputnum, int state)
 	}
 }
 
-/**************************************************************************
- * STATE IMPORT/EXPORT
- **************************************************************************/
-void z80_device::state_import(const device_state_entry &entry)
-{
-	switch (entry.index())
-	{
-	case STATE_GENPCBASE:
-		m_pc = m_prvpc;
-		[[fallthrough]];
-	case STATE_GENPC:
-		m_prvpc = m_pc;
-		m_ref = 0xffff00;
-		set_service_attention<SA_AFTER_EI, 0>();
-		if (HAS_LDAIR_QUIRK)
-			set_service_attention<SA_AFTER_LDAIR, 0>();
-		break;
-
-	case Z80_F: case Z80_AF:
-		set_f(F);
-		break;
-	case Z80_R:
-		m_r = m_rtemp & 0x7f;
-		m_r2 = m_rtemp & 0x80;
-		break;
-
-	default:
-		fatalerror("CPU_IMPORT_STATE() called for unexpected value\n");
-	}
-}
-
-void z80_device::state_export(const device_state_entry &entry)
-{
-	switch (entry.index())
-	{
-	case Z80_F: case Z80_AF:
-		F = get_f();
-		break;
-	case Z80_R:
-		m_rtemp = (m_r & 0x7f) | (m_r2 & 0x80);
-		break;
-
-	default:
-		fatalerror("CPU_EXPORT_STATE() called for unexpected value\n");
-	}
-}
-
-void z80_device::state_string_export(const device_state_entry &entry, std::string &str) const
-{
-	switch (entry.index())
-	{
-		case STATE_GENFLAGS:
-		{
-			str = string_format("%c%c%c%c%c%c%c%c",
-				m_f.s()         ? 'S':'.',
-				m_f.z()         ? 'Z':'.',
-				m_f.yx() & 0x20 ? 'Y':'.',
-				m_f.h()         ? 'H':'.',
-				m_f.yx() & 0x08 ? 'X':'.',
-				m_f.pv()        ? 'P':'.',
-				m_f.n           ? 'N':'.',
-				m_f.c           ? 'C':'.');
-		}
-		break;
-	}
-}
-
-/**************************************************************************
- * disassemble - call the disassembly helper function
- **************************************************************************/
-std::unique_ptr<util::disasm_interface> z80_device::create_disassembler()
-{
-	return std::make_unique<z80_disassembler>();
-}
-
-z80_device::z80_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
-	: z80_device(mconfig, Z80, tag, owner, clock)
-{
-}
-
-z80_device::z80_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock) :
-	cpu_device(mconfig, type, tag, owner, clock),
-	z80_daisy_chain_interface(mconfig, *this),
-	m_program_config("program", ENDIANNESS_LITTLE, 8, 16, 0),
-	m_opcodes_config("opcodes", ENDIANNESS_LITTLE, 8, 16, 0),
-	m_io_config("io", ENDIANNESS_LITTLE, 8, 16, 0),
-	m_irqack_cb(*this),
-	m_refresh_cb(*this),
-	m_nomreq_cb(*this),
-	m_halt_cb(*this),
-	m_busack_cb(*this),
+// Port: construction (MAME's constructor and device_start).
+z80_device::z80_device(segas32::Bus8 &program, segas32::Bus8 &io) :
 	m_m1_cycles(4),
 	m_mreq_cycles(3),
 	m_iorq_cycles(4)
 {
+	m_args.bus = m_opcodes.bus = m_data.bus = &program;
+	m_io.bus = &io;
+	device_start();
+	device_reset();
 }
-
-device_memory_interface::space_config_vector z80_device::memory_space_config() const
-{
-	if (has_configured_map(AS_OPCODES))
-	{
-		return space_config_vector {
-				std::make_pair(AS_PROGRAM, &m_program_config),
-				std::make_pair(AS_OPCODES, &m_opcodes_config),
-				std::make_pair(AS_IO,      &m_io_config) };
-	}
-	else
-	{
-		return space_config_vector {
-				std::make_pair(AS_PROGRAM, &m_program_config),
-				std::make_pair(AS_IO,      &m_io_config) };
-	}
-}
-
-DEFINE_DEVICE_TYPE(Z80, z80_device, "z80", "Zilog Z80")
