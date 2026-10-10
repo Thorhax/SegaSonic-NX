@@ -15,6 +15,7 @@ add_library(s32core STATIC
     src/core/rom_set.cpp
     src/cpu/v60/v60.cpp
     src/board/system32.cpp
+    src/board/video32.cpp
 )
 target_include_directories(s32core PUBLIC src)
 target_compile_options(s32core PRIVATE -Wall -Wextra)

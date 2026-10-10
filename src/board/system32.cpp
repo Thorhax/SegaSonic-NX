@@ -178,6 +178,7 @@ System32::System32(RomImages images)
     : img_(std::move(images)), work_(0x10000), shared_(0x2000), comm_(0x800), videoram_(0x10000),
       spriteram_(0x10000), palette_(0x4000) {
     cpu_ = std::make_unique<v60_device>(*this);
+    video_ = std::make_unique<Video32>(img_.tiles, img_.sprites);
     cpu_->irq_ack = [this] { return irq_callback(); };
     eeprom_.clock = [this] { return clock_now(); };
     reset();
@@ -190,11 +191,11 @@ void System32::reset() {
     std::fill(videoram_.begin(), videoram_.end(), 0);
     std::fill(spriteram_.begin(), spriteram_.end(), 0);
     std::fill(palette_.begin(), palette_.end(), 0);
-    mixer_.fill(0);
+    videoram_[0x1ff00 / 2] = 0x8000; // segas32_v.cpp device_start
+    mixer_.fill(0xffff);
     sprite_control_.fill(0);
     sprite_control_latched_.fill(0);
     sprite_render_count_ = 0;
-    sprite_buffer_b_ = false;
     std::fill(std::begin(irq_control_), std::end(irq_control_), 0xff); // device_reset
     std::fill(std::begin(io_latch_), std::end(io_latch_), 0);
     io_dir_ = io_cnt_ = 0;
@@ -439,7 +440,7 @@ void System32::io_write(int offset, uint8_t data) {
 
 uint8_t System32::sprite_control_r(int offset) {
     switch (offset) {
-    case 0: return uint8_t(0xfc | (sprite_buffer_b_ ? 0 : 1));
+    case 0: return uint8_t(0xfc | (video_->sprite_buffer_select() ? 1 : 0));
     case 1: return 0xfc | 1;
     case 2: return uint8_t(0xfc | sprite_control_latched_[2]);
     case 3: return uint8_t(0xfc | sprite_control_latched_[3]);
@@ -458,11 +459,11 @@ void System32::update_sprites() {
             sprite_render_count_ = sprite_control_[3] & 1;
         }
     }
-    // erase (bit 1) and render (bit 0) belong to the renderer (step 4); the
-    // swap's side effects the CPU can see are kept here.
+    if (BIT(sprite_control_[0], 1)) video_->erase_sprites();
     if (BIT(sprite_control_[0], 0)) {
-        sprite_buffer_b_ = !sprite_buffer_b_;
+        video_->swap_sprite_buffers(); // sprite_swap_buffers: also latches the control registers
         sprite_control_latched_ = sprite_control_;
+        video_->render_sprite_list(video_inputs());
     }
     sprite_control_[0] = 0;
 }

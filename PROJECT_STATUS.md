@@ -7,8 +7,7 @@
 3. **Board on the host** — main CPU side done (2026-10-10): V60, memory map,
    interrupts, timers, I/O chip, EEPROM, trackball counters, protection.
    The sound Z80 comes with step 5.
-4. Video (System 32 tilemaps with rotation/zoom, sprites, mixer), compared
-   with MAME frame by frame.
+4. **Video** — done on the host (2026-10-10): all layers, sprites, mixer.
 5. Sound: two YM3438 (ymfm) and the RF5C68.
 6. Switch: trackball controls, perf, hardware tests.
 
@@ -100,3 +99,17 @@ logo, the title and the TOP 15 table. Screen 416x224.
   PC and work-RAM checksum (drive.lua vs `s32run --log`): 1,800 of 1,800
   frames identical, through the SEGA logo, title and TOP 15 attract.
 - Host speed: 1,800 frames in ~3 s (~600 fps) on this PC.
+
+## Step 4: video (2026-10-10)
+
+- `src/board/video32`: MAME's System 32 video for one screen (see
+  THIRD_PARTY.md). Rendered at VBLANK start like MAME's screen update;
+  sprites drawn into the back buffer 50 us after VBLANK end
+  (update_sprites), as MAME.
+- Board start-up state from segas32_v.cpp device_start: video RAM
+  0x1ff00 = 0x8000, mixer registers 0xffff (trace and RAM still identical).
+- Checked against MAME snapshots (`s32run --frames DIR --every N` vs the
+  oracle's PNGs, scratch `pngcmp.py`): 13 frames over 1,800 and 21 frames
+  over 20,000 (both 416- and 320-wide modes, SEGA logo, title, TOP 15,
+  gameplay demo with sprites): 0 pixels differ in all of them. 20,000
+  frames of PC + work-RAM checksums identical too.

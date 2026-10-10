@@ -12,6 +12,7 @@
 #pragma once
 
 #include "core/rom_set.h"
+#include "board/video32.h"
 #include "cpu/v60/v60.h"
 
 #include <array>
@@ -91,7 +92,10 @@ public:
     const std::vector<uint8_t> &work_ram() const { return work_; }
     std::vector<uint8_t> &work_ram() { return work_; }
     Eeprom93c46 &eeprom() { return eeprom_; }
-    // Video state for the renderer (step 4).
+    // Draws the current frame (MAME's screen update at VBLANK start).
+    int render() { return video_->render(video_inputs()); }
+    const std::vector<uint32_t> &frame_pixels() const { return video_->frame(); }
+    // Video state for the renderer.
     const std::vector<uint16_t> &video_ram() const { return videoram_; }
     const std::vector<uint16_t> &sprite_ram() const { return spriteram_; }
     const std::vector<uint16_t> &palette_ram() const { return palette_; }
@@ -141,14 +145,19 @@ private:
     uint16_t palette_r(uint32_t offset);
     void palette_w(uint32_t offset, uint16_t data, uint16_t mask);
 
+    Video32::Inputs video_inputs() const {
+        return {videoram_.data(), spriteram_.data(), palette_.data(), mixer_.data(), sprite_control_latched_.data(),
+                tilebank_external_, display_enable_ != 0};
+    }
+
     RomImages img_;
     std::unique_ptr<v60_device> cpu_;
+    std::unique_ptr<Video32> video_;
     std::vector<uint8_t> work_, shared_, comm_;
     std::vector<uint16_t> videoram_, spriteram_, palette_;
     std::array<uint16_t, 0x40> mixer_{};
     std::array<uint8_t, 8> sprite_control_{}, sprite_control_latched_{};
     int sprite_render_count_ = 0;
-    bool sprite_buffer_b_ = false; // MAME: layer num of SPRITES vs SPRITES_2 swapped
     uint8_t irq_control_[16]{};
     uint8_t io_latch_[8]{}, io_dir_ = 0, io_cnt_ = 0;
     uint8_t tilebank_external_ = 0, display_enable_ = 0;
