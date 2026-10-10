@@ -1,0 +1,13 @@
+# Build output
+build/
+build-*/
+*.nro
+*.nacp
+*.elf
+# The user's ROM set and anything made from it
+roms/
+*.zip
+*.bin
+# Vendored upstream checkouts
+extern/
+CLAUDE.md
