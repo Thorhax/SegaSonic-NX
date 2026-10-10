@@ -199,6 +199,10 @@ int main(int, char **) {
             continue;
         }
 
+        if (next_frame_ns == 0) { // first frame after the menu: start a fresh perf window
+            window_start = armGetSystemTick();
+            frames = busy = 0;
+        }
         const uint64_t t0 = armGetSystemTick();
         game->run_frame(pad);
         SDL_UpdateTexture(screen_texture, nullptr, game->screen().data(), kScreenWidth * int(sizeof(uint32_t)));

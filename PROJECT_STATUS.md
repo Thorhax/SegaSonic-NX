@@ -3,7 +3,7 @@
 ## Plan
 
 1. **Project and Switch shell** — done (2026-10-10).
-2. MAME reference build with only the System 32 driver (frame/audio oracle).
+2. **MAME reference** — done (2026-10-10).
 3. Board on the host: V60 (MAME's core ported, interpreted), Z80, memory
    map, interrupts, I/O chip, protection; boot to the game's own screens.
 4. Video (System 32 tilemaps with rotation/zoom, sprites, mixer), compared
@@ -43,3 +43,35 @@
   `sdmc:/switch/sonic/sonic-perf.log`. Until the board exists, START GAME
   shows a test screen (colour bars; one marker per player on the left
   stick, white while A or B is held). Icon is a placeholder.
+
+### Step 1 hardware test (2026-10-10)
+
+Menu, ROM check and test screen work; 60.00 fps at 0.82 ms per frame; P1's
+marker follows the stick. (The first log line, 0.22 fps, counted the time in
+the menu; fixed.)
+
+## Step 2: MAME reference (2026-10-10)
+
+`Model2/mame-ref/sonic`: MAME 0.289 built with only segas32.cpp:
+
+```sh
+make SUBTARGET=sonic SOURCES=src/mame/sega/segas32.cpp USE_QTDEBUG=0 \
+     NO_USE_PORTAUDIO=1 NO_USE_PIPEWIRE=1 -j
+```
+The generated `build/projects/sdl/mamesonic/gmake-linux/sonic.make` lacks
+fontconfig/freetype on this machine (no libfontconfig-dev): append
+`-l:libfontconfig.so.1 -lfreetype` to its LIBS lines and rerun make.
+
+`tools/oracle/drive.lua` runs it headless and writes, per frame, the V60 PC
+and a work-RAM checksum, plus snapshots and raw work-RAM dumps every N
+frames (outputs stay local: game-derived):
+
+```sh
+S32_FRAMES=1800 S32_SNAP=150 S32_DUMP=dump S32_LOG=frames.log \
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy mame-ref/sonic sonic \
+  -rompath segasonic-arcade -video none -sound none -nothrottle \
+  -skip_gameinfo -autoboot_script tools/oracle/drive.lua \
+  -snapshot_directory snap -nvram_directory nv -cfg_directory cfg
+```
+1,800 frames run at ~150% speed on this host; the attract shows the SEGA
+logo, the title and the TOP 15 table. Screen 416x224.
