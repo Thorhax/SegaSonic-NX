@@ -5,6 +5,12 @@
 
 #pragma once
 
+// Port: MAME device framework removed (marked "Port:"); the core runs on a
+// segas32::Bus16 through mame_shim.h's address_space.
+#include "cpu/v60/mame_shim.h"
+
+#include <functional>
+
 enum
 {
 	V60_R0 = 1,
@@ -79,42 +85,30 @@ enum
 };
 
 
-class v60_device : public cpu_device
+class v60_device
 {
 public:
-	// construction/destruction
-	v60_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
-
+	// Port: construction on a bus (16-bit data, 24-bit address, as the V60);
+	// irq_ack returns the vector of an interrupt being taken (MAME's
+	// irq_cycle callback).
+	explicit v60_device(segas32::Bus16 &bus, segas32::Bus16 *io = nullptr);
+	void reset();
+	// Runs until `cycles` are used (8 per instruction, MAME's average);
+	// returns the cycles actually used.
+	int run(int cycles);
+	void set_input(int inputnum, int state);
 	void stall();
+	std::function<int()> irq_ack = [] { return 0; };
+	// Port: called before each instruction when set (tracing against MAME).
+	std::function<void(v60_device &)> trace;
 
-	auto irq_cycle_callback() { return m_irq_cycle.bind(); }
-
-protected:
-	v60_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, int databits, int addrbits, uint32_t pir);
-
-	// device-level overrides
-	virtual void device_start() override ATTR_COLD;
-	virtual void device_reset() override ATTR_COLD;
-
-	// device_execute_interface overrides
-	virtual uint32_t execute_min_cycles() const noexcept override { return 1; }
-	virtual uint32_t execute_max_cycles() const noexcept override { return 1; }
-	virtual bool execute_input_edge_triggered(int inputnum) const noexcept override { return inputnum == INPUT_LINE_NMI; }
-	virtual void execute_run() override;
-	virtual void execute_set_input(int inputnum, int state) override;
-
-	// device_memory_interface overrides
-	virtual space_config_vector memory_space_config() const override;
-
-	// device_state_interface overrides
-	virtual void state_import(const device_state_entry &entry) override;
-	virtual void state_export(const device_state_entry &entry) override;
-	virtual void state_string_export(const device_state_entry &entry, std::string &str) const override;
-
-	// device_disasm_interface overrides
-	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
+	uint32_t pc() const { return m_reg[32]; }
+	uint32_t reg(int i) const { return m_reg[i]; }
+	void abort_run() { m_icount = 0; }
+	int cycles_left() const { return m_icount; } // Port: for the board's clock
 
 private:
+	void device_start(); // Port: one-time init, from the constructor
 	typedef uint32_t (v60_device::*am_func)();
 	typedef uint32_t (v60_device::*op6_func)(int reg);
 
@@ -149,10 +143,7 @@ private:
 	static const am_func s_Op5ATable[32];
 	static const am_func s_OpCodeTable[256];
 
-	devcb_read8 m_irq_cycle;
 
-	address_space_config m_program_config;
-	address_space_config m_io_config;
 
 	offs_t              m_start_pc;
 	uint32_t              m_reg[68];
@@ -164,14 +155,10 @@ private:
 	}                   m_flags;
 	uint8_t               m_irq_line;
 	uint8_t               m_nmi_line;
-	address_space *m_program;
-	memory_access<32, 1, 0, ENDIANNESS_LITTLE>::cache m_cache16;
-	memory_access<32, 2, 0, ENDIANNESS_LITTLE>::cache m_cache32;
+	address_space m_program_space, m_io_space; // Port: ours, see mame_shim.h
+	address_space *m_program = &m_program_space;
 
-	std::function<u8  (offs_t)> m_pr8;
-	std::function<u16 (offs_t)> m_pr16;
-	std::function<u32 (offs_t)> m_pr32;
-	address_space *m_io;
+	address_space *m_io = &m_io_space;
 	uint32_t              m_PPC;
 	int                 m_icount;
 	int                 m_stall_io;
@@ -201,7 +188,6 @@ private:
 	uint32_t              m_modwritevalw;
 	uint8_t               m_moddim;
 
-	uint32_t m_debugger_temp;
 
 
 	inline void v60SaveStack();
@@ -781,16 +767,5 @@ private:
 	void v60_try_irq();
 };
 
-
-class v70_device : public v60_device
-{
-public:
-	// construction/destruction
-	v70_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
-};
-
-
-DECLARE_DEVICE_TYPE(V60, v60_device)
-DECLARE_DEVICE_TYPE(V70, v70_device)
 
 #endif

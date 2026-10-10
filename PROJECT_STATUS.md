@@ -4,8 +4,9 @@
 
 1. **Project and Switch shell** — done (2026-10-10).
 2. **MAME reference** — done (2026-10-10).
-3. Board on the host: V60 (MAME's core ported, interpreted), Z80, memory
-   map, interrupts, I/O chip, protection; boot to the game's own screens.
+3. **Board on the host** — main CPU side done (2026-10-10): V60, memory map,
+   interrupts, timers, I/O chip, EEPROM, trackball counters, protection.
+   The sound Z80 comes with step 5.
 4. Video (System 32 tilemaps with rotation/zoom, sprites, mixer), compared
    with MAME frame by frame.
 5. Sound: two YM3438 (ymfm) and the RF5C68.
@@ -75,3 +76,27 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy mame-ref/sonic sonic \
 ```
 1,800 frames run at ~150% speed on this host; the attract shows the SEGA
 logo, the title and the TOP 15 table. Screen 416x224.
+
+## Step 3: the board (2026-10-10)
+
+- `src/cpu/v60`: MAME's V60 behind `mame_shim.h` (see THIRD_PARTY.md).
+- `src/board/system32`: the main board (MAME's segas32 register behaviour),
+  no video output or sound yet.
+- Timing follows MAME's scheduler, so interrupts land on the same
+  instruction: event times in attoseconds (MAME's own arithmetic:
+  HZ_TO_ATTOSECONDS, from_ticks), a CPU slice of floor(delta / cycle)
+  clocks, 8 clocks per instruction, and MAME's abort_timeslice when the CPU
+  sets a timer due inside its slice. Time 0 is VBLANK start (MAME's screen
+  origin): the first VBLANK interrupt is one frame in; VBLANK ends 38 lines
+  after it starts. A frame is reported at VBLANK start before the interrupt
+  is delivered, as MAME's frame_done sees it.
+- Things MAME does that the game sees: the 93C46's write/erase busy times
+  (the boot polls DO); each uPD4701 X counter starts at 0xfff (MAME's first
+  frame update reads the reversed X port as 0xfff against 0); registers
+  start zeroed.
+- Checked: `tools/oracle/trace.lua` (MAME, -debug -debugger none) against
+  `s32run --trace`, compared with `tools/oracle/trdiff.py`: all 2,047,052
+  trace lines of the first 60 frames identical (r0-r2, SP, PC). Per-frame
+  PC and work-RAM checksum (drive.lua vs `s32run --log`): 1,800 of 1,800
+  frames identical, through the SEGA logo, title and TOP 15 attract.
+- Host speed: 1,800 frames in ~3 s (~600 fps) on this PC.

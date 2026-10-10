@@ -73,61 +73,29 @@ Operating frequency: 20 MHz
 Package: 132-pin PGA, 200-pin QFP
 */
 
-#include "emu.h"
-#include "v60.h"
-#include "v60d.h"
+#include "cpu/v60/v60.h"
 
-#include "corefloat.h"
-
-
-DEFINE_DEVICE_TYPE(V60, v60_device, "v60", "NEC V60")
-DEFINE_DEVICE_TYPE(V70, v70_device, "v70", "NEC V70")
+#include <algorithm>
+#include <iterator>
 
 
-// Set m_PIR (Processor ID) for NEC m_ LSB is reserved to NEC,
-// so I don't know what it contains.
-v60_device::v60_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-	: v60_device(mconfig, V60, tag, owner, clock, 16, 24, 0x00006000)
+// Port: device type, constructors, address space configs and disassembler
+// removed; the bus comes in through the constructor.
+v60_device::v60_device(segas32::Bus16 &bus, segas32::Bus16 *io)
+	: m_start_pc(0xfffffff0)
 {
+	m_program_space.attach(&bus, 0xffffff);
+	m_io_space.attach(io ? io : &bus, 0xffffff);
+	std::fill(std::begin(m_reg), std::end(m_reg), 0u); // MAME's devices start zero-filled
+	m_reg[45] = 0x00006000; // PIR: V60
+	device_start();
+	reset();
 }
-
-
-v60_device::v60_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, int databits, int addrbits, uint32_t pir)
-	: cpu_device(mconfig, type, tag, owner, clock)
-	, m_irq_cycle(*this, 0)
-	, m_program_config("program", ENDIANNESS_LITTLE, databits, addrbits, 0)
-	, m_io_config("io", ENDIANNESS_LITTLE, 16, 24, 0)
-	, m_start_pc(0xfffffff0)
-{
-	m_reg[45] = pir;
-}
-
-// Set m_PIR (Processor ID) for NEC v70. LSB is reserved to NEC,
-// so I don't know what it contains.
-v70_device::v70_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-	: v60_device(mconfig, V70, tag, owner, clock, 32, 32, 0x00007000)
-{
-}
-
-device_memory_interface::space_config_vector v60_device::memory_space_config() const
-{
-	return space_config_vector {
-		std::make_pair(AS_PROGRAM, &m_program_config),
-		std::make_pair(AS_IO,      &m_io_config)
-	};
-}
-
-
-std::unique_ptr<util::disasm_interface> v60_device::create_disassembler()
-{
-	return std::make_unique<v60_disassembler>();
-}
-
 
 // memory accessors
-#define OpRead8(a)   m_pr8(a)
-#define OpRead16(a)  m_pr16(a)
-#define OpRead32(a)  m_pr32(a)
+#define OpRead8(a)   m_program->read_byte(a)          // Port: was the opcode cache
+#define OpRead16(a)  m_program->read_word_unaligned(a)
+#define OpRead32(a)  m_program->read_dword_unaligned(a)
 
 
 // macros stolen from MAME for flags calc
@@ -411,135 +379,11 @@ void v60_device::device_start()
 	m_modwritevalw = 0;
 	m_moddim = 0;
 
-	m_program = &space(AS_PROGRAM);
-	if (m_program->data_width() == 16)
-	{
-		m_program->cache(m_cache16);
-		m_pr8  = [this](offs_t address) -> u8  { return m_cache16.read_byte(address); };
-		m_pr16 = [this](offs_t address) -> u16 { return m_cache16.read_word_unaligned(address); };
-		m_pr32 = [this](offs_t address) -> u32 { return m_cache16.read_dword_unaligned(address); };
-	}
-	else
-	{
-		m_program->cache(m_cache32);
-		m_pr8  = [this](offs_t address) -> u8  { return m_cache32.read_byte(address); };
-		m_pr16 = [this](offs_t address) -> u16 { return m_cache32.read_word_unaligned(address); };
-		m_pr32 = [this](offs_t address) -> u32 { return m_cache32.read_dword_unaligned(address); };
-	}
-
-	m_io = &space(AS_IO);
-
-	save_item(NAME(m_reg));
-	save_item(NAME(m_irq_line));
-	save_item(NAME(m_nmi_line));
-	save_item(NAME(m_PPC));
-	save_item(NAME(_CY));
-	save_item(NAME(_OV));
-	save_item(NAME(_S));
-	save_item(NAME(_Z));
-
-	state_add( V60_R0,     "R0",     R0).formatstr("%08X");
-	state_add( V60_R1,     "R1",     R1).formatstr("%08X");
-	state_add( V60_R2,     "R2",     R2).formatstr("%08X");
-	state_add( V60_R3,     "R3",     R3).formatstr("%08X");
-	state_add( V60_R4,     "R4",     R4).formatstr("%08X");
-	state_add( V60_R5,     "R5",     R5).formatstr("%08X");
-	state_add( V60_R6,     "R6",     R6).formatstr("%08X");
-	state_add( V60_R7,     "R7",     R7).formatstr("%08X");
-	state_add( V60_R8,     "R8",     R8).formatstr("%08X");
-	state_add( V60_R9,     "R9",     R9).formatstr("%08X");
-	state_add( V60_R10,    "R10",    R10).formatstr("%08X");
-	state_add( V60_R11,    "R11",    R11).formatstr("%08X");
-	state_add( V60_R12,    "R12",    R12).formatstr("%08X");
-	state_add( V60_R13,    "R13",    R13).formatstr("%08X");
-	state_add( V60_R14,    "R14",    R14).formatstr("%08X");
-	state_add( V60_R15,    "R15",    R15).formatstr("%08X");
-	state_add( V60_R16,    "R16",    R16).formatstr("%08X");
-	state_add( V60_R17,    "R17",    R17).formatstr("%08X");
-	state_add( V60_R18,    "R18",    R18).formatstr("%08X");
-	state_add( V60_R19,    "R19",    R19).formatstr("%08X");
-	state_add( V60_R20,    "R20",    R20).formatstr("%08X");
-	state_add( V60_R21,    "R21",    R21).formatstr("%08X");
-	state_add( V60_R22,    "R22",    R22).formatstr("%08X");
-	state_add( V60_R23,    "R23",    R23).formatstr("%08X");
-	state_add( V60_R24,    "R24",    R24).formatstr("%08X");
-	state_add( V60_R25,    "R25",    R25).formatstr("%08X");
-	state_add( V60_R26,    "R26",    R26).formatstr("%08X");
-	state_add( V60_R27,    "R27",    R27).formatstr("%08X");
-	state_add( V60_R28,    "R28",    R28).formatstr("%08X");
-	state_add( V60_AP,     "AP",     AP).formatstr("%08X");
-	state_add( V60_FP,     "FP",     FP).formatstr("%08X");
-	state_add( V60_SP,     "SP",     SP).formatstr("%08X");
-	state_add( V60_PC,     "PC",     PC).formatstr("%08X");
-	state_add( V60_PSW,    "PSW",    m_debugger_temp).callimport().callexport().formatstr("%08X");
-	state_add( V60_ISP,    "ISP",    ISP).formatstr("%08X");
-	state_add( V60_L0SP,   "L0SP",   L0SP).formatstr("%08X");
-	state_add( V60_L1SP,   "L1SP",   L1SP).formatstr("%08X");
-	state_add( V60_L2SP,   "L2SP",   L2SP).formatstr("%08X");
-	state_add( V60_L3SP,   "L3SP",   L3SP).formatstr("%08X");
-	state_add( V60_SBR,    "SBR",    SBR).formatstr("%08X");
-	state_add( V60_TR,     "TR",     TR).formatstr("%08X");
-	state_add( V60_SYCW,   "SYCW",   SYCW).formatstr("%08X");
-	state_add( V60_TKCW,   "TKCW",   TKCW).formatstr("%08X");
-	state_add( V60_PIR,    "PIR",    PIR).formatstr("%08X");
-	state_add( V60_PSW2,   "PSW2",   PSW2).formatstr("%08X");
-	state_add( V60_ATBR0,  "ATBR0",  ATBR0).formatstr("%08X");
-	state_add( V60_ATLR0,  "ATLR0",  ATLR0).formatstr("%08X");
-	state_add( V60_ATBR1,  "ATBR1",  ATBR1).formatstr("%08X");
-	state_add( V60_ATLR1,  "ATLR1",  ATLR1).formatstr("%08X");
-	state_add( V60_ATBR2,  "ATBR2",  ATBR2).formatstr("%08X");
-	state_add( V60_ATLR2,  "ATLR2",  ATLR2).formatstr("%08X");
-	state_add( V60_ATBR3,  "ATBR3",  ATBR3).formatstr("%08X");
-	state_add( V60_ATLR3,  "ATLR3",  ATLR3).formatstr("%08X");
-	state_add( V60_TRMODE, "TRMODE", TRMODE).formatstr("%08X");
-	state_add( V60_ADTR0,  "ADTR0",  ADTR0).formatstr("%08X");
-	state_add( V60_ADTR1,  "ADTR1",  ADTR1).formatstr("%08X");
-	state_add( V60_ADTMR0, "ADTMR0", ADTMR0).formatstr("%08X");
-	state_add( V60_ADTMR1, "ADTMR1", ADTMR1).formatstr("%08X");
-
-	state_add( STATE_GENPC, "GENPC", PC).noshow();
-	state_add( STATE_GENPCBASE, "CURPC", m_PPC ).noshow();
-	state_add( STATE_GENFLAGS, "GENFLAGS", m_debugger_temp).callimport().formatstr("%7s").noshow();
-
-	set_icountptr(m_icount);
+	// Port: address spaces, caches, save states and debugger state removed.
 }
 
 
-void v60_device::state_export(const device_state_entry &entry)
-{
-	switch (entry.index())
-	{
-		case V60_PSW:
-			m_debugger_temp = v60ReadPSW();
-			break;
-	}
-}
-
-void v60_device::state_string_export(const device_state_entry &entry, std::string &str) const
-{
-		switch(entry.index()) {
-		case STATE_GENFLAGS:
-				str = string_format("%c%c%c%c",
-												PSW & 1 ? 'Z' : '.',
-												PSW & 2 ? 'S' : '.',
-												PSW & 4 ? 'O' : '.',
-												PSW & 8 ? 'C' : '.');
-				break;
-		}
-}
-
-void v60_device::state_import(const device_state_entry &entry)
-{
-	switch (entry.index())
-	{
-		case V60_PSW:
-			v60WritePSW( m_debugger_temp );
-			break;
-	}
-}
-
-
-void v60_device::device_reset()
+void v60_device::reset()
 {
 	PSW   = 0x10000000;
 	PC    = m_start_pc;
@@ -563,7 +407,6 @@ void v60_device::stall()
 
 void v60_device::v60_do_irq(int vector)
 {
-	standard_irq_callback(vector, PC);
 	uint32_t oldPSW = v60_update_psw_for_exception(1, 0);
 
 	// Push PC and PSW onto the stack
@@ -585,13 +428,13 @@ void v60_device::v60_try_irq()
 		if(m_irq_line != ASSERT_LINE)
 			m_irq_line = CLEAR_LINE;
 
-		vector = m_irq_cycle();
+		vector = irq_ack();
 
 		v60_do_irq(vector + 0x40);
 	}
 }
 
-void v60_device::execute_set_input(int irqline, int state)
+void v60_device::set_input(int irqline, int state)
 {
 	if(irqline == INPUT_LINE_NMI) {
 		switch(state) {
@@ -613,8 +456,9 @@ void v60_device::execute_set_input(int irqline, int state)
 
 // Actual cycles / instruction is unknown
 
-void v60_device::execute_run()
+int v60_device::run(int cycles)
 {
+	m_icount = cycles;
 	if (m_irq_line != CLEAR_LINE)
 		v60_try_irq();
 
@@ -622,11 +466,12 @@ void v60_device::execute_run()
 	{
 		uint32_t inc;
 		m_PPC = PC;
-		debugger_instruction_hook(PC);
+		if (trace) trace(*this); // Port
 		m_icount -= 8;  /* fix me -- this is just an average */
 		inc = (this->*s_OpCodeTable[OpRead8(PC)])();
 		PC += inc;
 		if (m_irq_line != CLEAR_LINE)
 			v60_try_irq();
 	}
+	return cycles - m_icount;
 }

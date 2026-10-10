@@ -1,34 +1,61 @@
-// s32run ROMS.zip: loads the SegaSonic set and reports each memory region
-// (size and CRC-32). The headless runner the board will grow into: later
-// steps add frames, input scripts, frame hashes and dumps for comparison
-// against MAME.
+// s32run ROMS.zip [FRAMES] [--log FILE] [--dump DIR --every N]
+// Runs the board headless. --log writes, per frame, "frame PC wram_sum" in
+// the format of tools/oracle/drive.lua, for comparison with MAME.
+#include "board/system32.h"
 #include "core/rom_set.h"
 #include "core/zip.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <string>
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: s32run ROMS.zip\n");
+        std::fprintf(stderr, "usage: s32run ROMS.zip [FRAMES] [--log FILE] [--dump DIR --every N]\n");
         return 2;
     }
+    int frames = 0, every = 0;
+    std::string log_path, dump_dir, trace_path;
+    for (int i = 2; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--log") && i + 1 < argc) log_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--dump") && i + 1 < argc) dump_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--every") && i + 1 < argc) every = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--trace") && i + 1 < argc) trace_path = argv[++i];
+        else frames = std::atoi(argv[i]);
+    }
     try {
-        const segas32::RomImages img = segas32::load_sonic(argv[1]);
-        auto show = [](const char *name, const std::vector<uint8_t> &r) {
-            std::printf("  %-10s %8zu bytes  crc32 %08x\n", name, r.size(), segas32::crc32(r.data(), r.size()));
-        };
+        segas32::RomImages img = segas32::load_sonic(argv[1]);
         std::printf("s32run: %s: all 18 chips present, CRCs match MAME's sonic (rev. C)\n", argv[1]);
-        show("main_cpu", img.main_cpu);
-        show("sound_cpu", img.sound_cpu);
-        show("tiles", img.tiles);
-        show("sprites", img.sprites);
-        // The V60 (24-bit bus) starts at 0xfffff0; System 32 maps the first
-        // 1 MB of the program region again at 0xf00000, so that is ROM 0x0ffff0.
-        const auto &m = img.main_cpu;
-        std::printf("  V60 reset code (0xfffff0 = ROM 0x0ffff0):");
-        for (int i = 0; i < 16; ++i) std::printf(" %02x", m[0x0ffff0 + i]);
-        std::printf("\n");
+        segas32::System32 board(std::move(img));
+        FILE *log = log_path.empty() ? nullptr : std::fopen(log_path.c_str(), "w");
+        FILE *trace = trace_path.empty() ? nullptr : std::fopen(trace_path.c_str(), "w");
+        if (trace)
+            board.cpu().trace = [trace](v60_device &c) {
+                // as MAME's: trace FILE,cpu,,{tracelog "%08X %08X %08X %08X ",r0,r1,r2,sp}
+                std::fprintf(trace, "%08X %08X %08X %08X %X\n", c.reg(0), c.reg(1), c.reg(2), c.reg(31), c.pc());
+            };
+        segas32::Inputs in;
+        for (int f = 0; f < frames; ++f) {
+            board.run_frame(in);
+            const auto &w = board.work_ram();
+            uint32_t sum = 0;
+            for (size_t a = 0; a < w.size(); a += 4)
+                sum = sum * 31 + (uint32_t(w[a]) | uint32_t(w[a + 1]) << 8 | uint32_t(w[a + 2]) << 16 | uint32_t(w[a + 3]) << 24);
+            if (log) std::fprintf(log, "%d %08x %08x\n", f, board.cpu().pc(), sum);
+            if (!dump_dir.empty() && every && f % every == 0) {
+                char path[512];
+                std::snprintf(path, sizeof path, "%s/wram_%05d.bin", dump_dir.c_str(), f);
+                if (FILE *d = std::fopen(path, "wb")) {
+                    std::fwrite(w.data(), 1, w.size(), d);
+                    std::fclose(d);
+                }
+            }
+        }
+        if (log) std::fclose(log);
+        if (trace) std::fclose(trace);
+        std::printf("s32run: %d frames, V60 at %08x\n", frames, board.cpu().pc());
     } catch (const std::exception &e) {
         std::fprintf(stderr, "s32run: %s\n", e.what());
         return 1;

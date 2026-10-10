@@ -13,9 +13,12 @@ endif()
 add_library(s32core STATIC
     src/core/zip.cpp
     src/core/rom_set.cpp
+    src/cpu/v60/v60.cpp
+    src/board/system32.cpp
 )
 target_include_directories(s32core PUBLIC src)
 target_compile_options(s32core PRIVATE -Wall -Wextra)
+set_source_files_properties(src/cpu/v60/v60.cpp PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
 
 add_executable(s32run tools/s32run/main.cpp)
 target_link_libraries(s32run PRIVATE s32core)
