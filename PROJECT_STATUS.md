@@ -160,3 +160,20 @@ video 5.1 ms mean (8.4 max), worst frame 13.4 ms of 16.7.
   frames identical. Audio vs MAME's -wavwrite over that game: per-second RMS
   within ~1%, correlation 0.991-0.998 at a constant 6-sample lag (MAME's
   resampler).
+- Host cost with sound (played game, render every frame): ~4.0 ms a frame;
+  the mixer 27%, sprites 7%, ymfm ~10%, Z80 ~5%.
+
+## Switch build 3 (2026-10-11, testing)
+
+Sound on the Switch: `platform/switch/audio.h` plays the board's 48 kHz
+stereo through an SDL callback from a ring buffer held near 60 ms (one
+sample in 256 dropped or repeated when it drifts; callback on core 2).
+Video drawn on core 1 (`render_worker.h`): at VBLANK start the emulation
+thread copies the video state (`Video32::take_snapshot`: video RAM, palette,
+mixer, latched sprite registers, the displayed sprite buffer) and a second
+Video32 renders it (`render_snapshot`, which marks cached tiles dirty by
+diffing video RAM against its previous snapshot) while the next frame
+emulates; one frame of display latency. Host check: render_snapshot on a
+second instance = the board's own render on 3,600 of 3,600 frames of a
+played game. Menu: SOUND ON/MUTED. Perf log adds audio_q_ms; video_ms is
+the worker's render time.

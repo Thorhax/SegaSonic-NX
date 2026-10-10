@@ -1,8 +1,11 @@
 // Nintendo Switch app for the SegaSonic the Hedgehog (System 32) port.
 // Menu, input, ROM check, 4:3 presentation, 60 Hz pacing and the perf log
-// around the System 32 board (src/board). No sound yet.
+// around the System 32 board (src/board). Video is drawn on core 1
+// (render_worker.h), audio played from a ring buffer (audio.h).
 #define SDL_MAIN_HANDLED
+#include "audio.h"
 #include "controls.h"
+#include "render_worker.h"
 #include "text.h"
 #include "board/system32.h"
 #include "core/rom_set.h"
@@ -103,6 +106,12 @@ int main(int, char **) {
     }
 
     std::unique_ptr<segas32::System32> game;
+    std::unique_ptr<switch_app::RenderWorker> worker;
+    switch_app::Audio audio;
+    audio.open();
+    std::vector<uint32_t> pixels;
+    int width = 416;
+    bool muted = false;
     bool menu = true, running = true, wait_release = false, show_perf = false, test_switch = false;
     int selection = 0;
     uint32_t previous = 0;
@@ -114,17 +123,23 @@ int main(int, char **) {
 
     auto start_game = [&]() {
         try {
+            worker.reset();
+            game.reset();
             game = std::make_unique<segas32::System32>(segas32::load_sonic(rom_path));
+            worker = std::make_unique<switch_app::RenderWorker>(game->roms());
+            game->on_frame = [&] { worker->submit(*game); };
+            pixels.clear();
             game->eeprom().data.fill(0xffff);
             uint16_t saved[64];
             if (FILE *f = std::fopen("eeprom.bin", "rb")) { // settings and high scores
                 if (std::fread(saved, 2, 64, f) == 64) std::copy(saved, saved + 64, game->eeprom().data.begin());
                 std::fclose(f);
             }
-            status = "LEFT STICK: TRACKBALL  A/B: BUTTON  PLUS: START  MINUS: COIN. NO SOUND YET.";
+            status = "LEFT STICK: TRACKBALL  A/B: BUTTON  PLUS: START  MINUS: COIN.";
             return true;
         } catch (const std::exception &e) {
             status = std::string("Error: ") + e.what();
+            worker.reset();
             game.reset();
             return false;
         }
@@ -153,11 +168,12 @@ int main(int, char **) {
         if (!menu && !wait_release && switch_app::menu_chord(pad[0].buttons)) {
             menu = true;
             wait_release = true;
+            audio.pause();
             save_eeprom();
         }
 
         if (menu) {
-            constexpr int kItems = 5;
+            constexpr int kItems = 6;
             if (!wait_release) {
                 if (pressed & switch_app::Up) selection = (selection + kItems - 1) % kItems;
                 if (pressed & switch_app::Down) selection = (selection + 1) % kItems;
@@ -180,6 +196,10 @@ int main(int, char **) {
                         status = test_switch ? "Test switch held: resume to enter the test menu." : "Test switch released.";
                         break;
                     case 4:
+                        muted = !muted;
+                        audio.mute(muted);
+                        break;
+                    case 5:
                         save_eeprom();
                         running = false;
                         break;
@@ -193,7 +213,8 @@ int main(int, char **) {
             const std::string labels[kItems] = {
                 game ? "RESUME GAME" : "START GAME", "RESET GAME",
                 show_perf ? "PERFORMANCE OVERLAY: [ON]" : "PERFORMANCE OVERLAY: [OFF]",
-                test_switch ? "TEST SWITCH: [ON - HOLDING]" : "TEST SWITCH: [OFF]", "EXIT TO HOMEBREW MENU"};
+                test_switch ? "TEST SWITCH: [ON - HOLDING]" : "TEST SWITCH: [OFF]",
+                muted ? "SOUND: MUTED" : "SOUND: ON", "EXIT TO HOMEBREW MENU"};
             for (int i = 0; i < kItems; ++i) {
                 if (i == selection) SDL_SetRenderDrawColor(renderer, 255, 205, 50, 255);
                 else SDL_SetRenderDrawColor(renderer, 210, 210, 220, 255);
@@ -219,21 +240,25 @@ int main(int, char **) {
         const uint64_t t0 = armGetSystemTick();
         segas32::Inputs in = map_inputs(pad);
         in.test = test_switch;
-        int width = 416;
         try {
-            game->run_frame(in);
-            const uint64_t t1 = armGetSystemTick();
-            emu += t1 - t0;
-            width = game->render();
-            render += armGetSystemTick() - t1;
+            game->run_frame(in); // hands the frame to the render worker at VBLANK start
+            emu += armGetSystemTick() - t0;
+            audio.push(game->audio());
         } catch (const std::exception &e) {
             status = std::string("Error: ") + e.what();
+            worker.reset();
             game.reset();
+            audio.pause();
             menu = true;
             continue;
         }
+        uint64_t render_ticks = 0;
+        if (worker->take(pixels, width, render_ticks)) {
+            render += render_ticks;
+            const SDL_Rect upd{0, 0, width, kScreenHeight};
+            SDL_UpdateTexture(screen_texture, &upd, pixels.data(), width * int(sizeof(uint32_t)));
+        }
         const SDL_Rect src{0, 0, width, kScreenHeight};
-        SDL_UpdateTexture(screen_texture, &src, game->frame_pixels().data(), width * int(sizeof(uint32_t)));
         busy += armGetSystemTick() - t0;
         ++frames;
 
@@ -244,10 +269,11 @@ int main(int, char **) {
         SDL_RenderCopy(renderer, screen_texture, &src, &dst);
         if (show_perf) {
             char line[96];
-            std::snprintf(line, sizeof line, "FPS: %.1f  EMU: %.2fMS  VIDEO: %.2fMS", fps, emu_ms, render_ms);
+            std::snprintf(line, sizeof line, "FPS: %.1f  EMU: %.2fMS  VIDEO: %.2fMS  AUDIO: %.0fMS", fps, emu_ms, render_ms,
+                          audio.queued_ms());
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
-            SDL_Rect bar{20, 10, 500, 28};
+            SDL_Rect bar{20, 10, 700, 28};
             SDL_RenderFillRect(renderer, &bar);
             SDL_SetRenderDrawColor(renderer, 50, 255, 100, 255);
             switch_app::text(renderer, line, 30, 16, 2, 70, 1);
@@ -263,7 +289,8 @@ int main(int, char **) {
             emu_ms = frames ? double(armTicksToNs(emu)) / 1e6 / double(frames) : 0.0;
             render_ms = frames ? double(armTicksToNs(render)) / 1e6 / double(frames) : 0.0;
             if (perf_log) {
-                std::fprintf(perf_log, "perf: fps=%.2f frame_ms=%.2f emu_ms=%.2f video_ms=%.2f\n", fps, busy_ms, emu_ms, render_ms);
+                std::fprintf(perf_log, "perf: fps=%.2f frame_ms=%.2f emu_ms=%.2f video_ms=%.2f audio_q_ms=%.1f\n", fps,
+                             busy_ms, emu_ms, render_ms, audio.queued_ms());
                 std::fflush(perf_log);
             }
             window_start = now;
@@ -282,6 +309,8 @@ int main(int, char **) {
         }
     }
 
+    worker.reset();
+    audio.close();
     if (perf_log) {
         std::fprintf(perf_log, "=== %s SWITCH LOG END ===\n", kAppName);
         std::fclose(perf_log);

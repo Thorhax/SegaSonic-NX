@@ -23,7 +23,7 @@ add_library(s32core STATIC
     extern/ymfm/src/ymfm_adpcm.cpp
     extern/ymfm/src/ymfm_ssg.cpp
 )
-target_include_directories(s32core PUBLIC extern/ymfm/src)
+target_include_directories(s32core SYSTEM PUBLIC extern/ymfm/src)
 target_include_directories(s32core PUBLIC src)
 target_compile_options(s32core PRIVATE -Wall -Wextra)
 set_source_files_properties(src/cpu/v60/v60.cpp src/cpu/z80/z80.cpp extern/ymfm/src/ymfm_opn.cpp extern/ymfm/src/ymfm_adpcm.cpp extern/ymfm/src/ymfm_ssg.cpp PROPERTIES COMPILE_OPTIONS "-w")

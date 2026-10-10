@@ -27,8 +27,17 @@ add_library(switch_core STATIC
     "${SONIC_ROOT}/src/cpu/v60/v60.cpp"
     "${SONIC_ROOT}/src/board/system32.cpp"
     "${SONIC_ROOT}/src/board/video32.cpp"
+    "${SONIC_ROOT}/src/board/scheduler.cpp"
+    "${SONIC_ROOT}/src/board/rf5c68.cpp"
+    "${SONIC_ROOT}/src/cpu/z80/z80.cpp"
+    "${SONIC_ROOT}/extern/ymfm/src/ymfm_opn.cpp"
+    "${SONIC_ROOT}/extern/ymfm/src/ymfm_adpcm.cpp"
+    "${SONIC_ROOT}/extern/ymfm/src/ymfm_ssg.cpp"
 )
-set_source_files_properties("${SONIC_ROOT}/src/cpu/v60/v60.cpp" PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
+target_include_directories(switch_core SYSTEM PUBLIC "${SONIC_ROOT}/extern/ymfm/src")
+set_source_files_properties("${SONIC_ROOT}/src/cpu/v60/v60.cpp" "${SONIC_ROOT}/src/cpu/z80/z80.cpp"
+    "${SONIC_ROOT}/extern/ymfm/src/ymfm_opn.cpp" "${SONIC_ROOT}/extern/ymfm/src/ymfm_adpcm.cpp"
+    "${SONIC_ROOT}/extern/ymfm/src/ymfm_ssg.cpp" PROPERTIES COMPILE_OPTIONS "-w")
 target_include_directories(switch_core PUBLIC "${SONIC_ROOT}/src")
 
 add_executable(${APP_TARGET} main.cpp)

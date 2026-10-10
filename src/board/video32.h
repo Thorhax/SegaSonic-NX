@@ -45,6 +45,20 @@ public:
 
     // Draws a frame; returns its width (320 or 416).
     int render(const Inputs &in);
+
+    // Threaded rendering: the emulation thread copies what render() reads
+    // (at VBLANK start) and a second Video32 draws it on another core.
+    struct Snapshot {
+        std::vector<uint16_t> videoram, palette, sprites; // sprites: the displayed sprite buffer
+        std::array<uint16_t, 0x40> mixer{};
+        std::array<uint8_t, 8> latched{};
+        uint8_t tilebank_external = 0;
+        bool display_enable = false;
+    };
+    void take_snapshot(const Inputs &in, Snapshot &s) const;
+    // On the drawing instance: marks cached tiles dirty where video RAM
+    // changed since its last snapshot, takes the sprite buffer, renders.
+    int render_snapshot(const Snapshot &s);
     const std::vector<uint32_t> &frame() const { return frame_; }
 
 private:
@@ -105,6 +119,7 @@ private:
     std::vector<uint32_t> frame_;
     Inputs in_{};
     int width_ = 416;
+    std::vector<uint16_t> last_videoram_; // render_snapshot: video RAM of the previous snapshot
 };
 
 } // namespace segas32

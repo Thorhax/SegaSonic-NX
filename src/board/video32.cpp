@@ -809,6 +809,34 @@ void Video32::mix_all_layers(const Rect &cliprect, uint8_t enablemask) {
     }
 }
 
+void Video32::take_snapshot(const Inputs &in, Snapshot &s) const {
+    s.videoram.assign(in.videoram, in.videoram + 0x10000);
+    s.palette.assign(in.palette, in.palette + 0x4000);
+    s.sprites = layers_[LAYER_SPRITES].bitmap;
+    std::copy_n(in.mixer, 0x40, s.mixer.begin());
+    std::copy_n(in.sprite_latched, 8, s.latched.begin());
+    s.tilebank_external = in.tilebank_external;
+    s.display_enable = in.display_enable;
+}
+
+int Video32::render_snapshot(const Snapshot &s) {
+    const Inputs in{s.videoram.data(), nullptr, s.palette.data(), s.mixer.data(), s.latched.data(), s.tilebank_external,
+                    s.display_enable};
+    in_ = in;
+    if (last_videoram_.size() != s.videoram.size()) {
+        invalidate_all();
+        last_videoram_ = s.videoram;
+    } else {
+        for (uint32_t i = 0; i < 0x10000; ++i)
+            if (last_videoram_[i] != s.videoram[i]) {
+                last_videoram_[i] = s.videoram[i];
+                videoram_written(i);
+            }
+    }
+    layers_[LAYER_SPRITES].bitmap = s.sprites;
+    return render(in);
+}
+
 int Video32::render(const Inputs &in) {
     in_ = in;
     width_ = ((in.videoram[0x1ff00 / 2] >> 15) & 1) ? 416 : 320;

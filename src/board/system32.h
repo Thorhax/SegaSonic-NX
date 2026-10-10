@@ -136,6 +136,8 @@ public:
     Eeprom93c46 &eeprom() { return eeprom_; }
 
     int render() { return video_->render(video_inputs()); }
+    void snapshot_video(Video32::Snapshot &s) const { video_->take_snapshot(video_inputs(), s); }
+    const RomImages &roms() const { return img_; }
     const std::vector<uint32_t> &frame_pixels() const { return video_->frame(); }
 
     // Audio of the last frame, stereo int16 at kAudioRate (MAME's routes: each
