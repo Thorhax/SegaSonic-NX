@@ -192,6 +192,7 @@ void System32::reset() {
     std::fill(spriteram_.begin(), spriteram_.end(), 0);
     std::fill(palette_.begin(), palette_.end(), 0);
     videoram_[0x1ff00 / 2] = 0x8000; // segas32_v.cpp device_start
+    video_->invalidate_all();
     mixer_.fill(0xffff);
     sprite_control_.fill(0);
     sprite_control_latched_.fill(0);
@@ -563,7 +564,10 @@ void System32::write16(uint32_t a, uint16_t data, uint16_t mask) {
         }
         break;
     }
-    case 0x3: combine(videoram_[(a & 0x1ffff) >> 1], data, mask); break;
+    case 0x3:
+        combine(videoram_[(a & 0x1ffff) >> 1], data, mask);
+        video_->videoram_written((a & 0x1ffff) >> 1);
+        break;
     case 0x4: combine(spriteram_[(a & 0x1ffff) >> 1], data, mask); break;
     case 0x5:
         if (mask & 0x00ff) sprite_control_[(a >> 1) & 7] = uint8_t(data);

@@ -28,6 +28,8 @@ Video32::Video32(const std::vector<uint8_t> &tile_rom, const std::vector<uint8_t
                 tiles_[t * 256 + size_t(y) * 16 + size_t(x)] = uint8_t((bit & 4) ? byte & 0x0f : byte >> 4);
             }
     for (auto &l : layers_) l.bitmap.assign(size_t(kMaxWidth) * kHeight, 0); // MAME bitmaps start cleared
+    text_cell_dirty_.fill(1);
+    text_char_dirty_.fill(1);
     solid_ffff_.fill(0xffff);
 }
 
@@ -42,6 +44,72 @@ uint16_t Video32::tile_pixel(int page, int bank, int x, int y) const {
     if (data & 0x4000) tx ^= 15;
     if (data & 0x8000) ty ^= 15;
     return uint16_t(((data >> 4) & 0x1ff) * 16 + tiles_[code * 256 + size_t(ty) * 16 + size_t(tx)]);
+}
+
+void Video32::invalidate_all() {
+    for (auto &p : pages_)
+        if (p) {
+            p->dirty.fill(1);
+            p->any_dirty = true;
+        }
+    text_all_dirty_ = true;
+}
+
+void Video32::videoram_written(uint32_t off) {
+    off &= 0xffff;
+    text_char_dirty_[off >> 4] = 1; // gfx 1 decodes characters straight from video RAM
+    if (off == 0x1ff5c / 2) text_all_dirty_ = true; // text page / character bank
+    else if (in_.videoram && (off & 0xf800) == uint32_t(((in_.videoram[0x1ff5c / 2] >> 4) & 0x1f) << 11))
+        text_cell_dirty_[off & 0x7ff] = 1;
+    if (off < 0x1ff00 / 2)
+        for (int bank = 0; bank < 4; ++bank)
+            if (auto &p = pages_[size_t((off >> 9) * 4 + bank)]) {
+                p->dirty[off & 0x1ff] = 1;
+                p->any_dirty = true;
+            }
+}
+
+void Video32::draw_page_tile(Page &p, int page, int bank, int tile) {
+    const int tx = (tile & 31) * 16, ty = (tile >> 5) * 16;
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) p.pix[size_t(ty + y) * 512 + size_t(tx + x)] = tile_pixel(page, bank, tx + x, ty + y);
+}
+
+const uint16_t *Video32::page_pixmap(int page, int bank) {
+    auto &slot = pages_[size_t((page & 0x7f) * 4 + bank)];
+    if (!slot) {
+        if (pages_alive_ >= 64) { // bound the memory (MAME keeps 32 pages): start over
+            for (auto &q : pages_) q.reset();
+            pages_alive_ = 0;
+        }
+        slot = std::make_unique<Page>();
+        ++pages_alive_;
+    }
+    Page &p = *slot;
+    if (p.any_dirty) {
+        for (int t = 0; t < 512; ++t)
+            if (p.dirty[size_t(t)]) {
+                draw_page_tile(p, page & 0x7f, bank, t);
+                p.dirty[size_t(t)] = 0;
+            }
+        p.any_dirty = false;
+    }
+    return p.pix.data();
+}
+
+void Video32::update_text_layer() {
+    for (int cell = 0; cell < 2048; ++cell) {
+        const uint16_t ctrl = in_.videoram[0x1ff5c / 2];
+        const uint16_t data = in_.videoram[(((ctrl >> 4) & 0x1f) << 11) | cell];
+        const uint32_t code = uint32_t((ctrl & 7) << 9) | (data & 0x1ff);
+        if (!text_all_dirty_ && !text_cell_dirty_[size_t(cell)] && !text_char_dirty_[code]) continue;
+        const int cx = (cell & 63) * 8, cy = (cell >> 6) * 8;
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 8; ++x) text_pix_[size_t(cy + y) * 512 + size_t(cx + x)] = text_pixel(cx + x, cy + y);
+        text_cell_dirty_[size_t(cell)] = 0;
+    }
+    text_char_dirty_.fill(0);
+    text_all_dirty_ = false;
 }
 
 // Text layer: 64x32 tiles of 8x8, gfx_8x8x4_packed_msb from video RAM.
@@ -181,13 +249,14 @@ void Video32::update_tilemap_zoom(Layer &layer, const Rect &cliprect, int bgnum)
         bool clipdraw = clipdraw_start;
         if (clipdraw || extents[1] <= cliprect.max_x) {
             int transparent = 0;
-            const int tm0 = pages[((srcy >> 27) & 2) + 0], tm1 = pages[((srcy >> 27) & 2) + 1];
             const int row = int((srcy >> 20) & 0xff);
+            const uint16_t *const src[2] = {page_pixmap(pages[((srcy >> 27) & 2) + 0], bank) + row * 512,
+                                            page_pixmap(pages[((srcy >> 27) & 2) + 1], bank) + row * 512};
             uint32_t srcx = srcx_start;
             for (;;) {
                 if (clipdraw) {
                     for (int x = extents[0]; x < extents[1]; x++) {
-                        uint16_t pix = tile_pixel((srcx >> 29) & 1 ? tm1 : tm0, bank, int((srcx >> 20) & 0x1ff), row);
+                        uint16_t pix = src[(srcx >> 29) & 1][(srcx >> 20) & 0x1ff];
                         srcx += srcxstep;
                         if ((pix & 0x0f) == 0) pix = 0, transparent++;
                         dst[x] = pix;
@@ -243,12 +312,13 @@ void Video32::update_tilemap_rowscroll(Layer &layer, const Rect &cliprect, int b
             else srcy = yscroll + (kHeight - 1) - y, ylookup = (kHeight - 1) - y;
             if (rowscroll) srcx += table[0x000 + 0x100 * (bgnum - 2) + ylookup] & 0x3ff;
             if (rowselect) srcy = (yscroll + table[0x200 + 0x100 * (bgnum - 2) + ylookup]) & 0x1ff;
-            const int tm0 = pages[((srcy >> 7) & 2) + 0], tm1 = pages[((srcy >> 7) & 2) + 1];
             const int row = srcy & 0xff;
+            const uint16_t *const src[2] = {page_pixmap(pages[((srcy >> 7) & 2) + 0], bank) + row * 512,
+                                            page_pixmap(pages[((srcy >> 7) & 2) + 1], bank) + row * 512};
             for (;;) {
                 if (clipdraw) {
                     for (int x = extents[0]; x < extents[1]; x++, srcx += srcxstep) {
-                        uint16_t pix = tile_pixel((srcx >> 9) & 1 ? tm1 : tm0, bank, srcx & 0x1ff, row);
+                        uint16_t pix = src[(srcx >> 9) & 1][srcx & 0x1ff];
                         if ((pix & 0x0f) == 0) pix = 0, transparent++;
                         dst[x] = pix;
                     }
@@ -272,10 +342,12 @@ void Video32::update_tilemap_rowscroll(Layer &layer, const Rect &cliprect, int b
 // when the screen is flipped; transparent pen 0.
 void Video32::update_tilemap_text(Layer &layer, const Rect &cliprect) {
     const bool flip = (in_.videoram[0x1ff00 / 2] >> 9) & 1;
+    update_text_layer();
     for (int y = cliprect.min_y; y <= cliprect.max_y; y++) {
         uint16_t *dst = layer.row(y);
-        for (int x = cliprect.min_x; x <= cliprect.max_x; x++)
-            dst[x] = flip ? text_pixel(511 - x, 255 - y) : text_pixel(x, y);
+        if (!flip) std::copy_n(&text_pix_[size_t(y) * 512 + size_t(cliprect.min_x)], cliprect.max_x - cliprect.min_x + 1, dst + cliprect.min_x);
+        else
+            for (int x = cliprect.min_x; x <= cliprect.max_x; x++) dst[x] = text_pix_[size_t(255 - y) * 512 + size_t(511 - x)];
     }
     // MAME's text layer never marks rows transparent (they stay 0 from start).
 }

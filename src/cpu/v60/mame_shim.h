@@ -25,6 +25,9 @@ using offs_t = uint32_t;
 enum { CLEAR_LINE = 0, ASSERT_LINE = 1, HOLD_LINE = 2 };
 enum { INPUT_LINE_IRQ0 = 0, INPUT_LINE_NMI = 32 };
 
+// MAME's two-argument BIT (libnx defines a one-argument one; ours wins in
+// the files that include this, which use only MAME's).
+#undef BIT
 #define BIT(x, n) (((x) >> (n)) & 1)
 
 [[noreturn]] inline void fatalerror(const char *format, ...) {

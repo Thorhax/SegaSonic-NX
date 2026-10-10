@@ -113,3 +113,20 @@ logo, the title and the TOP 15 table. Screen 416x224.
   over 20,000 (both 416- and 320-wide modes, SEGA logo, title, TOP 15,
   gameplay demo with sprites): 0 pixels differ in all of them. 20,000
   frames of PC + work-RAM checksums identical too.
+- Speed: tilemap pages (512x256 per page and bank) and the text layer are
+  cached and redrawn where video RAM changed (as MAME's tilemap dirty
+  marking). Host: 7.3 -> 3.8 ms per frame with a render every frame; the
+  mixer is now ~40% of the time. Pixels re-checked: still identical.
+- `s32run --inputs FILE` (lines "A-B key=value": coin1..3, start1..3,
+  button1..3, trackx1..3, tracky1..3); `scripts/inputs/start_game.txt`
+  coins up and starts: player select, the controls tutorial and the story
+  intro play.
+
+## Switch build 2 (2026-10-10, testing)
+
+The board runs on the Switch: picture, no sound. Controls per player (up to
+three controllers): left stick or D-pad = trackball (up to 40 counts a
+frame; the game ignores per-frame deltas of 0x60 or more; MAME's X is
+reversed, Y counts downwards), A/B = button, Plus = start, Minus = coin.
+Menu: test switch toggle. EEPROM saved to sdmc:/switch/sonic/eeprom.bin on
+menu and exit. Perf log: emu_ms and video_ms per frame.

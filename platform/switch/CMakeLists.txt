@@ -24,7 +24,11 @@ set(ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/icon.jpg")
 add_library(switch_core STATIC
     "${SONIC_ROOT}/src/core/zip.cpp"
     "${SONIC_ROOT}/src/core/rom_set.cpp"
+    "${SONIC_ROOT}/src/cpu/v60/v60.cpp"
+    "${SONIC_ROOT}/src/board/system32.cpp"
+    "${SONIC_ROOT}/src/board/video32.cpp"
 )
+set_source_files_properties("${SONIC_ROOT}/src/cpu/v60/v60.cpp" PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
 target_include_directories(switch_core PUBLIC "${SONIC_ROOT}/src")
 
 add_executable(${APP_TARGET} main.cpp)

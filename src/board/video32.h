@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace segas32 {
@@ -29,6 +30,12 @@ public:
     };
 
     explicit Video32(const std::vector<uint8_t> &tile_rom, const std::vector<uint8_t> &sprite_rom);
+
+    // The board calls this for every video RAM word written, so cached
+    // tilemap pages and the text layer are redrawn where they changed
+    // (MAME's tilemap dirty marking in videoram_w).
+    void videoram_written(uint32_t word_offset);
+    void invalidate_all();
 
     // Sprite engine (MAME update_sprites' erase/swap/render).
     void erase_sprites();
@@ -58,7 +65,17 @@ private:
         uint16_t extent[32][16];
     };
 
-    uint16_t tile_pixel(int page, int bank, int x, int y) const; // tilemap page pixmap value
+    // Tilemap page cache: 512x256 pixmaps of palette indices per (page, bank).
+    struct Page {
+        std::vector<uint16_t> pix = std::vector<uint16_t>(512 * 256);
+        std::array<uint8_t, 512> dirty;
+        bool any_dirty = true;
+        Page() { dirty.fill(1); }
+    };
+    const uint16_t *page_pixmap(int page, int bank);
+    void draw_page_tile(Page &p, int page, int bank, int tile);
+    void update_text_layer();
+    uint16_t tile_pixel(int page, int bank, int x, int y) const; // uncached (reference)
     uint16_t text_pixel(int x, int y) const;
     bool compute_clipping_extents(bool enable, bool clipout, int clipmask, const Rect &clip, Extents &list) const;
     void compute_tilemap_flips(int bgnum, bool &flipx, bool &flipy) const;
@@ -75,6 +92,12 @@ private:
     const uint16_t *layer_scanline(int layer, int y);
 
     std::vector<uint8_t> tiles_;          // decoded 16x16 tiles, one pen per byte
+    std::array<std::unique_ptr<Page>, 128 * 4> pages_;
+    int pages_alive_ = 0;
+    std::vector<uint16_t> text_pix_ = std::vector<uint16_t>(512 * 256);
+    std::array<uint8_t, 2048> text_cell_dirty_;
+    std::array<uint8_t, 4096> text_char_dirty_;
+    bool text_all_dirty_ = true;
     const std::vector<uint8_t> &sprite_rom_;
     std::array<Layer, LAYER_COUNT> layers_;
     int sprite_num_ = LAYER_SPRITES, sprite2_num_ = LAYER_SPRITES_2; // MAME layer "num", swapped with the buffers

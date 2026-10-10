@@ -1,0 +1,7 @@
+# Coin, start, then hold the button and roll the trackball (player 1).
+1000-1005 coin1=1
+1100-1105 start1=1
+1300-1310 button1=1
+1400-1900 trackx1=-20
+1900-2400 tracky1=20
+2400-2405 button1=1

@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -17,13 +19,14 @@ int main(int argc, char **argv) {
         return 2;
     }
     int frames = 0, every = 0;
-    std::string log_path, dump_dir, trace_path, frames_dir; // --frames DIR: raw RGB frames every --every
+    std::string log_path, dump_dir, trace_path, frames_dir, inputs_path; // --frames DIR: raw RGB frames every --every
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--log") && i + 1 < argc) log_path = argv[++i];
         else if (!std::strcmp(argv[i], "--dump") && i + 1 < argc) dump_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--every") && i + 1 < argc) every = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--trace") && i + 1 < argc) trace_path = argv[++i];
         else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) frames_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--inputs") && i + 1 < argc) inputs_path = argv[++i];
         else frames = std::atoi(argv[i]);
     }
     try {
@@ -37,8 +40,35 @@ int main(int argc, char **argv) {
                 // as MAME's: trace FILE,cpu,,{tracelog "%08X %08X %08X %08X ",r0,r1,r2,sp}
                 std::fprintf(trace, "%08X %08X %08X %08X %X\n", c.reg(0), c.reg(1), c.reg(2), c.reg(31), c.pc());
             };
-        segas32::Inputs in;
+        // --inputs FILE: lines "A-B key=value", frames A..B inclusive; keys
+        // coin1..3, start1..3, button1..3 (0/1), trackx1..3 / tracky1..3
+        // (counts per frame).
+        struct Ev { int a, b; std::string key; int value; };
+        std::vector<Ev> script;
+        if (!inputs_path.empty()) {
+            FILE *f = std::fopen(inputs_path.c_str(), "r");
+            if (!f) throw std::runtime_error("cannot open " + inputs_path);
+            char line[256];
+            while (std::fgets(line, sizeof line, f)) {
+                int a, b, v;
+                char key[32];
+                if (std::sscanf(line, "%d-%d %31[a-z0-9]=%d", &a, &b, key, &v) == 4) script.push_back({a, b, key, v});
+            }
+            std::fclose(f);
+        }
         for (int f = 0; f < frames; ++f) {
+            segas32::Inputs in;
+            for (const Ev &e : script) {
+                if (f < e.a || f > e.b) continue;
+                const int p = e.key.back() - '1';
+                if (p < 0 || p > 2) continue;
+                const std::string k = e.key.substr(0, e.key.size() - 1);
+                if (k == "coin") in.coin[p] = e.value;
+                else if (k == "start") in.start[p] = e.value;
+                else if (k == "button") in.button[p] = e.value;
+                else if (k == "trackx") in.track_x[p] = int16_t(e.value);
+                else if (k == "tracky") in.track_y[p] = int16_t(e.value);
+            }
             board.run_frame(in);
             const auto &w = board.work_ram();
             uint32_t sum = 0;
