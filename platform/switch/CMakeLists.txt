@@ -18,7 +18,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-D__SWITCH__ -O3 -DNDEBUG -Wall -Wextra -ffunction-sections -fdata-sections)
 
 set(APP_TARGET "sonic_switch")
-set(APP_VERSION "0.1.0")
+set(APP_VERSION "1.0.0")
 set(ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/icon.jpg")
 
 add_library(switch_core STATIC
