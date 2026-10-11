@@ -42,7 +42,7 @@
   or missing chips, 4:3 presentation, 60 Hz deadline pacing, perf log
   `sdmc:/switch/sonic/sonic-perf.log`. Until the board exists, START GAME
   shows a test screen (colour bars; one marker per player on the left
-  stick, white while A or B is held). Icon is a placeholder.
+  stick, white while A or B is held).
 
 ### Step 1 hardware test (2026-10-10)
 
@@ -177,3 +177,13 @@ emulates; one frame of display latency. Host check: render_snapshot on a
 second instance = the board's own render on 3,600 of 3,600 frames of a
 played game. Menu: SOUND ON/MUTED. Perf log adds audio_q_ms; video_ms is
 the worker's render time.
+
+### Build 4 hardware test and step 6 (2026-10-11)
+
+Build 3 ran at 60 fps with sound, but the stick did not change character at
+player select. The game changes character after about 12 frames of trackball
+motion in total. Build 4 adds L / R, which roll the trackball for 20 frames
+per press and keep rolling while held, plus per-player `input:` lines in the
+perf log. On hardware, holding L or R cycles through the characters, and the
+controls feel right. The icon (`platform/switch/icon.jpg`) is the game's
+title artwork, scaled to 256x256.
