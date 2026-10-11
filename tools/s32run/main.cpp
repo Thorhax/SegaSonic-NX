@@ -5,14 +5,16 @@
 //   --trace FILE        V60 trace (r0 r1 r2 sp pc before each instruction)
 //   --ztrace FILE       Z80 trace (af bc de hl pc before each instruction)
 //   --wav FILE          the mixed audio, 16-bit stereo 48 kHz
+//   --eeprom FILE       load the EEPROM from FILE if it exists, save it at the end
 //   --inputs FILE       lines "A-B key=value" for frames A..B: coin1..3,
-//                       start1..3, button1..3 (0/1), trackx1..3, tracky1..3
+//                       start1..3, button1..3, test1, service1 (0/1), trackx1..3, tracky1..3
 // Frames are logged at MAME's frame_done point (VBLANK start, before the
 // interrupt reaches the CPU).
 #include "board/system32.h"
 #include "core/rom_set.h"
 #include "core/zip.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,11 +26,11 @@
 int main(int argc, char **argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: s32run ROMS.zip [FRAMES] [--log F] [--frames DIR] [--dump DIR] [--every N]\n"
-                             "       [--trace F] [--ztrace F] [--wav F] [--inputs F]\n");
+                             "       [--trace F] [--ztrace F] [--wav F] [--inputs F] [--eeprom F]\n");
         return 2;
     }
     int frames = 0, every = 0;
-    std::string log_path, dump_dir, trace_path, frames_dir, inputs_path, wav_path, ztrace_path;
+    std::string log_path, dump_dir, trace_path, frames_dir, inputs_path, wav_path, ztrace_path, eeprom_path;
     for (int i = 2; i < argc; ++i) {
         auto arg = [&](const char *name) { return !std::strcmp(argv[i], name) && i + 1 < argc; };
         if (arg("--log")) log_path = argv[++i];
@@ -39,12 +41,19 @@ int main(int argc, char **argv) {
         else if (arg("--frames")) frames_dir = argv[++i];
         else if (arg("--inputs")) inputs_path = argv[++i];
         else if (arg("--wav")) wav_path = argv[++i];
+        else if (arg("--eeprom")) eeprom_path = argv[++i];
         else frames = std::atoi(argv[i]);
     }
     try {
         segas32::RomImages img = segas32::load_sonic(argv[1]);
         std::printf("s32run: %s: all 18 chips present, CRCs match MAME's sonic (rev. C)\n", argv[1]);
         segas32::System32 board(std::move(img));
+        if (!eeprom_path.empty())
+            if (FILE *f = std::fopen(eeprom_path.c_str(), "rb")) {
+                uint16_t saved[64];
+                if (std::fread(saved, 2, 64, f) == 64) std::copy(saved, saved + 64, board.eeprom().data.begin());
+                std::fclose(f);
+            }
 
         struct Ev {
             int a, b;
@@ -124,6 +133,8 @@ int main(int argc, char **argv) {
                 else if (k == "button") in.button[p] = e.value;
                 else if (k == "trackx") in.track_x[p] = int16_t(e.value);
                 else if (k == "tracky") in.track_y[p] = int16_t(e.value);
+                else if (k == "test") in.test = e.value != 0;
+                else if (k == "service") in.service = e.value != 0;
             }
             current = f;
             board.run_frame(in);
@@ -134,6 +145,11 @@ int main(int argc, char **argv) {
             }
         }
         if (log) std::fclose(log);
+        if (!eeprom_path.empty())
+            if (FILE *f = std::fopen(eeprom_path.c_str(), "wb")) {
+                std::fwrite(board.eeprom().data.data(), 2, 64, f);
+                std::fclose(f);
+            }
         if (trace) std::fclose(trace);
         if (ztrace) std::fclose(ztrace);
         if (wav) { // RIFF header: 16-bit stereo PCM

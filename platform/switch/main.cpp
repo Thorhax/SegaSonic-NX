@@ -54,15 +54,29 @@ std::string find_rom_file() {
 
 // Cabinet inputs from up to three controllers: the left stick (or D-pad)
 // rolls that player's trackball, A or B is the button, Plus start, Minus coin.
-segas32::Inputs map_inputs(const switch_app::Pad (&pads)[switch_app::Pads::kPlayers]) {
+// L / R roll the trackball left / right for at least kRollFrames: player
+// select changes character only after about 12 frames of trackball motion.
+constexpr int kRollFrames = 20;
+constexpr float kRollSpeed = 0.5f;
+
+segas32::Inputs map_inputs(const switch_app::Pad (&pads)[switch_app::Pads::kPlayers], int (&roll)[switch_app::Pads::kPlayers],
+                           uint32_t (&previous)[switch_app::Pads::kPlayers]) {
     segas32::Inputs in;
     for (int p = 0; p < switch_app::Pads::kPlayers; ++p) {
         const auto &pad = pads[p];
+        const uint32_t pressed = pad.buttons & ~previous[p];
+        previous[p] = pad.buttons;
+        if (pressed & switch_app::L) roll[p] = -kRollFrames;
+        if (pressed & switch_app::R) roll[p] = kRollFrames;
+        if (pad.buttons & switch_app::L) roll[p] = std::min(roll[p], -1);
+        if (pad.buttons & switch_app::R) roll[p] = std::max(roll[p], 1);
         float dx = pad.lx, dy = pad.ly;
         if (pad.buttons & switch_app::Left) dx = -1.0f;
         if (pad.buttons & switch_app::Right) dx = 1.0f;
         if (pad.buttons & switch_app::Up) dy = 1.0f;
         if (pad.buttons & switch_app::Down) dy = -1.0f;
+        if (roll[p] < 0) dx = -kRollSpeed, ++roll[p];
+        else if (roll[p] > 0) dx = kRollSpeed, --roll[p];
         auto curve = [](float v) { // dead zone, then up to kMax counts a frame
             constexpr float kMax = 40.0f; // the game ignores deltas of 0x60 or more
             const float a = std::fabs(v);
@@ -78,6 +92,19 @@ segas32::Inputs map_inputs(const switch_app::Pad (&pads)[switch_app::Pads::kPlay
     }
     return in;
 }
+
+// What reached the board in one perf window, per player (sonic-perf.log).
+struct InputStats {
+    int x_frames = 0, y_frames = 0, x_max = 0, y_max = 0;
+    uint32_t buttons = 0;
+    float lx_max = 0.0f;
+    void add(const segas32::Inputs &in, const switch_app::Pad &pad, int p) {
+        if (in.track_x[p]) ++x_frames, x_max = std::max(x_max, std::abs(int(in.track_x[p])));
+        if (in.track_y[p]) ++y_frames, y_max = std::max(y_max, std::abs(int(in.track_y[p])));
+        buttons |= pad.buttons;
+        lx_max = std::max(lx_max, std::fabs(pad.lx));
+    }
+};
 
 } // namespace
 
@@ -115,11 +142,15 @@ int main(int, char **) {
     bool menu = true, running = true, wait_release = false, show_perf = false, test_switch = false;
     int selection = 0;
     uint32_t previous = 0;
+    int roll[switch_app::Pads::kPlayers] = {};
+    uint32_t game_previous[switch_app::Pads::kPlayers] = {};
+    InputStats input_stats[switch_app::Pads::kPlayers];
     std::string status = "Place sonic.zip (MAME set sonic) in sdmc:/switch/sonic/ then choose START GAME.";
     const std::string rom_path = find_rom_file();
 
     uint64_t next_frame_ns = 0, window_start = armGetSystemTick(), frames = 0, busy = 0, emu = 0, render = 0;
     double fps = 0.0, busy_ms = 0.0, emu_ms = 0.0, render_ms = 0.0;
+    int last_track_x = 0, last_track_y = 0;
 
     auto start_game = [&]() {
         try {
@@ -135,7 +166,7 @@ int main(int, char **) {
                 if (std::fread(saved, 2, 64, f) == 64) std::copy(saved, saved + 64, game->eeprom().data.begin());
                 std::fclose(f);
             }
-            status = "LEFT STICK: TRACKBALL  A/B: BUTTON  PLUS: START  MINUS: COIN.";
+            status = "LEFT STICK: TRACKBALL  L/R: ROLL (PLAYER SELECT)  A/B: BUTTON  PLUS: START  MINUS: COIN.";
             return true;
         } catch (const std::exception &e) {
             status = std::string("Error: ") + e.what();
@@ -224,7 +255,7 @@ int main(int, char **) {
             switch_app::text(renderer, status, 40, 300, 2, 70, 3);
             SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
             switch_app::text(renderer, "PLAYERS 1-3: ONE CONTROLLER EACH. LEFT STICK OR D-PAD: TRACKBALL. A/B: BUTTON", 40, 560, 2, 70, 1);
-            switch_app::text(renderer, "PLUS=START   MINUS=COIN   PLUS+MINUS=MENU", 40, 590, 2, 70, 1);
+            switch_app::text(renderer, "L/R: ROLL LEFT/RIGHT (CHANGES CHARACTER)   PLUS=START   MINUS=COIN   PLUS+MINUS=MENU", 40, 590, 2, 70, 1);
             SDL_SetRenderDrawColor(renderer, 255, 205, 50, 255);
             switch_app::text(renderer, "A: SELECT   B: RESUME GAME", 40, 660, 2, 60, 1);
             SDL_RenderPresent(renderer);
@@ -238,7 +269,9 @@ int main(int, char **) {
             frames = busy = emu = render = 0;
         }
         const uint64_t t0 = armGetSystemTick();
-        segas32::Inputs in = map_inputs(pad);
+        segas32::Inputs in = map_inputs(pad, roll, game_previous);
+        for (int p = 0; p < switch_app::Pads::kPlayers; ++p) input_stats[p].add(in, pad[p], p);
+        last_track_x = in.track_x[0], last_track_y = in.track_y[0];
         in.test = test_switch;
         try {
             game->run_frame(in); // hands the frame to the render worker at VBLANK start
@@ -269,11 +302,11 @@ int main(int, char **) {
         SDL_RenderCopy(renderer, screen_texture, &src, &dst);
         if (show_perf) {
             char line[96];
-            std::snprintf(line, sizeof line, "FPS: %.1f  EMU: %.2fMS  VIDEO: %.2fMS  AUDIO: %.0fMS", fps, emu_ms, render_ms,
-                          audio.queued_ms());
+            std::snprintf(line, sizeof line, "FPS: %.1f  EMU: %.2fMS  VIDEO: %.2fMS  AUDIO: %.0fMS  P1 X:%+d Y:%+d", fps, emu_ms,
+                          render_ms, audio.queued_ms(), last_track_x, last_track_y);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
-            SDL_Rect bar{20, 10, 700, 28};
+            SDL_Rect bar{20, 10, 900, 28};
             SDL_RenderFillRect(renderer, &bar);
             SDL_SetRenderDrawColor(renderer, 50, 255, 100, 255);
             switch_app::text(renderer, line, 30, 16, 2, 70, 1);
@@ -291,8 +324,15 @@ int main(int, char **) {
             if (perf_log) {
                 std::fprintf(perf_log, "perf: fps=%.2f frame_ms=%.2f emu_ms=%.2f video_ms=%.2f audio_q_ms=%.1f\n", fps,
                              busy_ms, emu_ms, render_ms, audio.queued_ms());
+                for (int p = 0; p < switch_app::Pads::kPlayers; ++p) {
+                    const InputStats &st = input_stats[p];
+                    if (st.buttons || st.x_frames || st.y_frames)
+                        std::fprintf(perf_log, "input: p%d x_frames=%d x_max=%d y_frames=%d y_max=%d stick_x_max=%.2f buttons=%04x\n",
+                                     p + 1, st.x_frames, st.x_max, st.y_frames, st.y_max, st.lx_max, st.buttons);
+                }
                 std::fflush(perf_log);
             }
+            for (auto &st : input_stats) st = InputStats{};
             window_start = now;
             frames = busy = emu = render = 0;
         }
